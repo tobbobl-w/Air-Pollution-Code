@@ -1,0 +1,224 @@
+---
+title: "Complementary Data"
+output: html_notebook
+---
+
+This notebook is used to download and process the complementary data.  These two data sets are temperature inversions from NASA and UK land weather data from the MET Office.  
+
+This chunk of code gets the required packages. 
+#Packages
+
+```{r}
+library(RCurl)
+library(magrittr)
+library(data.table)
+library(curl)
+library(ncdf4)
+
+userpwd <- ''                                #Sets password and username for CEDA
+
+h <- curl::new_handle(userpwd = userpwd)
+
+```
+
+This next chunk gets the wind data.
+
+### Meta
+Meta data chunk, for exploration.  
+This chunk needs more work.  Files seem to have more info than just meta of uk sites.
+
+```{r}
+
+url = 'ftp://ftp.ceda.ac.uk/badc/ukmo-midas'
+
+check <- paste0(url, '/metadata/SRCE/previous_versions/')
+
+filenames <- getURL(url = check, userpwd = userpwd, ftp.use.epsv = F, dirlistonly = T)
+print(filenames)
+filenames <- strsplit(filenames, '\r\n')                              
+filenames <- unlist(filenames) 
+
+h <- new_handle(userpwd = userpwd)
+
+##CPAS - Works 
+curl_download(url = paste0(url, '/metadata/CPAS/CPAS.DATA'), destfile = 'Weather/CPAS', handle = h )
+
+headers <- as.character(t(read.csv('Weather/META_CPAS_HEADERS.csv', header =F)))
+
+meta <- read.csv('Weather/CPAS', header = F)
+meta <- setnames(meta, headers)
+meta <- setnames(meta, 1, 'SRC_ID')
+
+
+##CSCC - Works but not long/lat
+curl_download(url = paste0(url, '/metadata/CSCC/CSCC.DATA'), destfile = 'Weather/CSCC', handle = h )
+fread('Weather/CSCC')
+
+##GEAH - Works but again useless
+curl_download(url = paste0(url, '/metadata/GEAH/GEAH.DATA'), destfile = 'Weather/GEAH', handle = h )
+fread('Weather/GEAH')
+
+##GEAR - Works, useless
+curl_download(url = paste0(url, '/metadata/GEAR/GEAR.DATA'), destfile = 'Weather/GEAR', handle = h )
+fread('Weather/GEAR')
+
+##SRCC - works but useless
+curl_download(url = paste0(url, '/metadata/SRCC/SRCC.DATA'), destfile = 'Weather/SRCC', handle = h )
+fread('Weather/SRCC')
+```
+
+
+### UK Mean Wind Data
+- https://catalogue.ceda.ac.uk/uuid/a1f65a362c26c9fa667d98c431a1ad38
+
+
+```{r Wind Data}
+
+wind_url <- 'ftp://ftp.ceda.ac.uk/badc/ukmo-midas/data/WM/yearly_files/'
+wind_filenames <- getURL(wind_url, userpwd = userpwd, ftp.use.epsv = FALSE,dirlistonly = TRUE)%>%                             
+      strsplit(., '\r\n')%>%                                                                                        
+         unlist(.)%>%
+          .[43:71] ##ie 1991 to 2019
+
+for (i in 1:length(wind_filenames)){
+  url <-        paste0(url,wind_filenames[i])
+  destfile <-   paste0('Weather/Wind/wind_data', 1990+i) 
+  curl_download(url,destfile = destfile, handle = h)
+}
+
+```
+
+
+First need to decide how to aggregate the wind data.  Maybe show on a small scale how it is true first?
+
+## Daily_obs
+
+```{r Yearly Weather Observations}
+
+observation_url = 'ftp://ftp.ceda.ac.uk/badc/ukmo-midas/data/WD/yearly_files/'
+
+observation_filenames <- getURL(url = observation_url, userpwd = userpwd,  ftp.use.epsv = FALSE , dirlistonly = TRUE)%>%
+  strsplit(., '\r\n') %>%
+   unlist(.) %>%
+  .[106:136]
+
+for (i in 1:length(observation_filenames)){
+  url <- paste0(observation_url, observation_filenames[i])
+  destfile <- paste0('Weather/Daily_obs/daily_obs_data', 1990+i)
+  curl_download(url = url,destfile = destfile, handle = h)
+}
+
+
+
+```
+
+
+
+
+
+##Temperature Chunk
+Other temperature comes from site specific data.
+```{r}
+temp_url = 'ftp://ftp.ceda.ac.uk/badc/ukmo-midas/data/TD/yearly_files/'
+
+temp_filenames <- getURL(url = temp_url, userpwd = userpwd,  ftp.use.epsv = FALSE, dirlistonly = TRUE) %>%
+    strsplit(., '\r\n') %>%
+      unlist(.) %>%
+      .[139:167]
+
+for (i in 1:length(temp_filenames)){
+  url <- paste0(temp_url, temp_filenames[i])
+  destfile <- paste0('Weather/Temperature/temp_data', 1990+i)
+  curl_download(url = url,destfile = destfile, handle = h)
+  print(i)
+  }
+
+```
+
+
+
+##Rain Chunk
+- https://catalogue.ceda.ac.uk/uuid/bbd6916225e7475514e17fdbf11141c1
+
+```{r}
+rain_url = 'ftp://ftp.ceda.ac.uk/badc/ukmo-midas/data/RD/yearly_files/'
+
+rain_filenames <- getURL(url = url, userpwd = userpwd,  ftp.use.epsv = FALSE, dirlistonly = TRUE)%>%
+     strsplit(., '\r\n')%>% 
+      unlist(.)%>%
+      .[139:167]
+
+
+for (i in 1:length(rain_filenames)){
+  url <- paste0(rain_url, rain_filenames[i])
+  destfile <- paste0('Weather/Rain/rain_data', 1990+i)
+  curl_download(url = url,destfile = destfile , handle = h)
+ print(i)
+  }
+
+```
+
+
+
+# TEMPERATURE INVERSIONS
+Data Code - M2T3NVASM
+
+
+```{r}
+library(sys)
+library(getPass)
+library(httr)
+
+#Setting download directories
+
+netrc <- 'Temp_Inversion/_netrc'
+
+
+#creating NETRC
+
+if (file.exists(netrc) == FALSE || grepl("urs.earthdata.nasa.gov", readLines(netrc)) == FALSE) {
+  netrc_conn <- file(netrc)
+  
+  # User will be prompted for NASA Earthdata Login Username and Password below
+  writeLines(c("machine urs.earthdata.nasa.gov",
+               sprintf("login %s", getPass(msg = "Enter NASA Earthdata Login Username \n (or create an account at urs.earthdata.nasa.gov) :")),
+               sprintf("password %s", getPass(msg = "Enter NASA Earthdata Login Password:"))), netrc_conn)
+  close(netrc_conn)
+}
+
+
+
+```
+
+### Download
+```{r}
+##I ran this in multiple r scripts at once to speed up the downloads
+
+
+files <- readLines('Temp_Inversion/Download_links.txt')
+filename <- tail(strsplit(files[1], '/')[[1]], n = 1)
+
+files[340]
+# Loop through all files
+for (i in 1:length(files)) {
+  filename <-  tail(strsplit(files[i], '/')[[1]], n = 1) # Keep original filename
+  filename <- gsub('[[:punct:]]','_', filename)
+  
+  # Write file to disk (authenticating with netrc) using the current directory/filename
+  response <- GET(files[i], write_disk(paste('Temp_Inversion/',filename), overwrite = TRUE), progress(), config(netrc = TRUE, netrc_file = netrc), set_cookies("LC" = "cookies"))
+}
+
+temp_files <- readLines('more_atmos_links.txt')
+
+for (i in 1:length(temp_files)) {
+  filename <-  tail(strsplit(temp_files[i], '/')[[1]], n = 1) # Keep original filename
+  filename <- gsub('[[:punct:]]','_', filename)
+  
+  # Write file to disk (authenticating with netrc) using the current directory/filename
+  response <- GET(temp_files[i], write_disk(paste('Temp_Inversion/',filename), overwrite = TRUE), progress(), config(netrc = TRUE, netrc_file = netrc), set_cookies("LC" = "cookies"))
+}
+
+
+
+```
+
