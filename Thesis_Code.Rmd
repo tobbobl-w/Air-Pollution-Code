@@ -1,0 +1,1463 @@
+---
+title: "Thesis Code"
+output: html_notebook
+runtime: shiny
+---
+
+
+3 key sections of dissertation - first fixed effects model, second look at IV's and then third a heterogeniety analysis
+
+
+
+## Wellbeing Data
+
+The wellbeing data I use is from the Understanding Society Panel Survey.  This primarly consists of the UK Household Longitudinal Study (400,000 observations) which has run since 2009, this is complemented with the British Household Panel Survey which ran from 1991 to 2008 (230,000 observations.  
+
+The data is downloadable from the UK Data service, SN6614  The data download comes in years so I had to compile them all into one panel that can be matched with pollution data.  The next two chunks carry out this operation.
+
+
+```{r Packages, message=FALSE, warning=FALSE, include=FALSE}
+
+packages_vector <- c("foreign","sandwich","ggplot2","boot","zoo","quantreg","dummies","stargazer","lmtest","plm","xtable","gmm","AER",'openair',"readstata13","dplyr","lubridate","lfe","lme4","kableExtra",'cowplot','xts','nlme')
+geog_packages_vector <- c("sf","raster", "spData","devtools", "spDataLarge","dplyr", "stringr", "rnaturalearth","tmap","tidyr",'readtext','data.table', 'ncdf4','circular')
+
+all_packages <- c(packages_vector, geog_packages_vector)
+
+
+lapply(all_packages, require, character.only = T)
+```
+
+
+This chunk compiles the BHPS data. Currently the panel includes the likert measure of wellbeing along with variables for resipratory issues and depression.  
+### BHPS
+
+```{r BHPS, message=FALSE, warning=FALSE}
+##Components of wellbeing
+
+bhps_all <- function(get){
+
+codes <- paste0(rep('scghq',12),letters[1:12])
+names <- c('concentration','sleep','playing_useful_role','decision_capability','under_strain','overcoming_difficulties','enjoy_day_to_day','facing_problems','unhappy','losing_confidence','self_worth','general_happiness')
+  
+  if(get != 'yes'){stop(print('You dont want data?'))}
+
+bhps_yearly_wave <- function(wave){
+letter = letters[wave]
+paste_func <- function(letter, name){(paste0('b',letter, '_', name))}
+
+if(wave ==1){
+  columns <- c('scghq1_dv','gor_dv','istrtdatd','istrtdatm','hlprbi','age_dv','hlprbe',codes, 'fimngrs_dv', 'sex','race')
+  col_names <- paste_func(letter, columns) %>%
+    append('pidp')
+  
+  data <- fread(paste0('BHPS/bhps_w', wave,'/b',letter, '_indresp.tab'), header = T) %>%
+    .[,..col_names] %>%
+    setnames(col_names, c('wellbeing','region', 'day', 'month','depression' , 'age' , 'chest_problems',names, 'monthly_income','sex','ethnic_group', 'pidp')) %>%
+    .[, 'year' :=1991]
+}
+
+if(wave >= 2 && wave < 6){
+columns <- c('scghq1_dv','gor_dv','istrtdatd','istrtdatm','istrtdaty','hlprbi','age_dv','hlprbe',codes, 'fimngrs_dv','sex','race')
+col_names <- paste_func(letter, columns) %>%
+  append('pidp')
+
+data <- fread(paste0('BHPS/bhps_w', wave,'/b',letter, '_indresp.tab'), header = T) %>%
+  .[,..col_names] %>%
+   setnames(col_names, c('wellbeing','region', 'day', 'month','year','depression' , 'age'  ,'chest_problems',names,'monthly_income','sex', 'ethnic_group', 'pidp'))
+}
+
+if(wave >= 6 && wave <11){
+columns <- c('scghq1_dv','gor_dv','istrtdatd','istrtdatm','istrtdaty','hlprbi','age_dv','hlprbe','lfsat1',codes, 'fimngrs_dv','lfsato','sex','race')
+col_names <- paste_func(letter, columns) %>%
+  append('pidp')
+
+data <- fread(paste0('BHPS/bhps_w', wave,'/b',letter, '_indresp.tab'), header = T) %>%
+  .[,..col_names] %>%
+   setnames(col_names, c('wellbeing','region', 'day', 'month','year','depression' , 'age' ,'chest_problems','health_satisfaction' ,names,'monthly_income','life_satisfaction','sex','ethnic_group','pidp'))
+}
+
+if(wave == 11){
+columns <- c('scghq1_dv','gor_dv','istrtdatd','istrtdatm','istrtdaty','hlprbi','age_dv','hlprbe',codes, 'fimngrs_dv','sex','race')
+col_names <- paste_func(letter, columns) %>%
+  append('pidp')
+
+data <- fread(paste0('BHPS/bhps_w', wave,'/b',letter, '_indresp.tab'), header = T) %>%
+  .[,..col_names] %>%
+   setnames(col_names, c('wellbeing','region', 'day', 'month','year','depression' , 'age' ,'chest_problems',names,'monthly_income','sex','ethnic_group','pidp'))
+}
+
+if(wave == 12){
+columns <- c('scghq1_dv','gor_dv','istrtdatd','istrtdatm','istrtdaty','hlprbi','age_dv','hlprbe','lfsat1',codes,'fimngrs_dv','lfsato','sex','race')
+col_names <- paste_func(letter, columns) %>%
+  append('pidp')
+
+data <- fread(paste0('BHPS/bhps_w', wave,'/b',letter, '_indresp.tab'), header = T) %>%
+  .[,..col_names] %>%
+   setnames(col_names, c('wellbeing','region', 'day', 'month','year','depression' , 'age' ,'chest_problems', 'health_satisfaction' ,names, 'monthly_income','life_satisfaction','sex','ethnic_group','pidp'))
+}
+
+if(wave >= 13){
+columns <- c('scghq1_dv','gor_dv','istrtdatd','istrtdatm','istrtdaty','hlprbi','age_dv','hlprbe','lfsat1',codes,'fimngrs_dv','lfsato','sex', 'racel_bh')
+col_names <- paste_func(letter, columns) %>%
+  append('pidp')
+
+data <- fread(paste0('BHPS/bhps_w', wave,'/b',letter, '_indresp.tab'), header = T) %>%
+  .[,..col_names] %>%
+   setnames(col_names, c('wellbeing','region', 'day', 'month','year','depression' , 'age' ,'chest_problems', 'health_satisfaction' ,names, 'monthly_income','life_satisfaction','sex','ethnic_group','pidp'))
+}
+
+
+return(data)
+}
+
+data_list = list()
+
+for (wave in 1:18){
+  data_list[[wave]] <- bhps_yearly_wave(wave)
+  print(wave)
+}
+
+cross_wave <- fread('UKHLS/ukhls_wx/xwavedat.tab'
+                    )[ , .(pidp, racel_dv)]
+
+ethnic_group_dt <- setDT(data.frame(ethnicity = c('white_english','white_irish','white_gypsy','white_other','mixed_caribbean','mixed_african','mixed_asian','mixed_other',
+                                       'asian_indian','asian_pakistani','asian_bangladeshi','asian_chinese','asian_other',
+                                       'black_carribbean','black_african','black_other','arab','any_other_group'), racel_dv = c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,97)))
+
+all_bhps <- rbindlist(data_list, fill = T
+)[,date := paste(day,month,year, sep = '-')
+  ][,date := lubridate::dmy(date)
+    ][,c('year','month','day'):= NULL
+      ][,data_source := 'bhps'
+        ][cross_wave, on = 'pidp'
+         ][ethnic_group_dt, on = 'racel_dv']
+
+
+
+return(all_bhps)}
+
+all_bhps <- bhps_all('yes')
+
+row_count <- all_bhps[, .N]
+
+```
+
+
+
+This chunk compiles the UKHLS data. Currently the panel includes the likert measure of wellbeing along with variables for health satisfaction, asthma and depression. Both the UKHLS and BHPS data contain an indicator for region, the UKHLS data also includes an indicator for whether the individual lives in an urban (>10,000 people) or a rural area.  I use this later to better assign pollution. 
+
+### UKHLS
+
+The asthma and depression variables are only asked of new entrants into the survey, still_asthma/depression are asked of those who have previously said they have a condition.  This means that inapplicable coded negative 8 actually means no condition
+
+```{r UKHLS, message = F}
+ukhls_all <- function(get){
+  if(get != 'yes'){
+    stop(print('You dont want data')) 
+  }
+
+codes <- paste0(rep('scghq',12),letters[1:12])
+names <- c('concentration','sleep','playing_useful_role','decision_capability','under_strain','overcoming_difficulties','enjoy_day_to_day','facing_problems','unhappy','losing_confidence','self_worth','general_happiness')
+  
+  ukhls_year_func <- function(wave){
+    
+    letter <- letters[wave]
+    paste_func <- function(letter, name){return(paste0(letter, '_', name))}
+    
+    asthma_1 <- c('hcond1','hconds01')##1 & 3->9
+    asthma_1_names <- c('Asthma_first_wave','still_have_asthma')
+    
+    asthma_2 <- c('hcondns1','hcondn1')##2 -> 9
+    asthma_2_names <- c('Still_have_new_asthma','new_asthma')
+
+if (wave == 1){
+      
+      columns <- c('gor_dv','istrtdatd','istrtdatm','istrtdaty','urban_dv','scghq1_dv','age_dv',codes, 'fimngrs_dv','sclfsato','sex',asthma_1, 'racel')                                        ##columns i want from UKHLS, order is important
+      
+      col_names <- paste_func(letters[wave],columns) %>%
+        append('pidp')
+      
+      data <- fread(paste0('UKHLS/ukhls_w', wave,'/',letter,'_indresp.tab'), header = T) %>%
+        .[,..col_names] %>%
+      setnames(col_names, c('region','day','month','year','urban','wellbeing','age',names,'monthly_income','life_satisfaction','sex',asthma_1,'ethnic_group','pidp'))
+
+    }
+    
+if(wave ==2){
+  
+      columns <- c('gor_dv','istrtdatd','istrtdatm','istrtdaty','urban_dv','scghq1_dv','scsf1','age_dv',codes,'fimngrs_dv','sclfsato','sex',asthma_2,'racel') ##columns i want from UKHLS, order is important
+      col_names <- paste_func(letters[wave],columns) %>%
+        append('pidp')
+      data <- fread(paste0('UKHLS/ukhls_w', wave,'/',letter,'_indresp.tab'), header = T) %>%
+        .[,..col_names] %>%
+        setnames(col_names, c('region','day','month','year','urban','wellbeing','general_health','age',names,'monthly_income','life_satisfaction','sex',asthma_2,'ethnic_group','pidp'))
+    }
+    
+    if (wave >2){
+      
+      columns <- c('gor_dv','istrtdatd','istrtdatm','istrtdaty','urban_dv','scghq1_dv','scsf1','age_dv',codes,'fimngrs_dv','sclfsato','sex',asthma_2, asthma_1,'racel') ##columns i want from UKHLS, order is important
+      col_names <- paste_func(letters[wave],columns) %>%
+        append('pidp')
+      data <- fread(paste0('UKHLS/ukhls_w', wave,'/',letter,'_indresp.tab'), header = T) %>%
+        .[,..col_names] %>%
+        setnames(col_names,c('region','day','month','year','urban','wellbeing','general_health','age',names,'monthly_income','life_satisfaction','sex',asthma_2,asthma_1,'ethnic_group','pidp'))
+      
+    }
+    return(data)}
+  
+  ukhls_list <- list()
+  
+  for (wave in 1:9){
+    ukhls_list[[wave]] <- ukhls_year_func(wave)
+    print(paste0('Wave ',wave,' done'))
+  }
+  
+  all <- rbindlist(ukhls_list, fill = T
+     )[,date := paste(day,month,year, sep = '-')
+  ][,date := dmy(date)
+  ][,c('year','month','day'):= NULL
+    ][,data_source := 'UKHLS'
+        ][hcond1 == 1| hcondn1 == 1| hcondns1 ==1| hconds01 ==1, Asthma := 1
+          ][ , Asthma := nafill(Asthma, fill = 0)]
+ 
+
+cross_wave <- fread('UKHLS/ukhls_wx/xwavedat.tab'
+                    )[ , .(pidp, racel_dv)]
+
+ethnic_group_dt <- setDT(data.frame(ethnicity = c('white_english','white_irish','white_gypsy','white_other','mixed_caribbean','mixed_african','mixed_asian','mixed_other',
+                                       'asian_indian','asian_pakistani','asian_bangladeshi','asian_chinese','asian_other',
+                                       'black_carribbean','black_african','black_other','arab','any_other_group'), racel_dv = c(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,97)))
+
+
+all_ukhls <- all[cross_wave, on = 'pidp'
+          ][ethnic_group_dt, on = 'racel_dv']
+
+  return(all_ukhls)
+}
+
+ 
+max(wave_9$date, na.rm = T) ## last date is 21st may 2019
+
+```
+
+
+This next chunk of code uses the geographic location of the site to asssign it to a region.  Unfortunately, I cannot access the USS on a lower geographic level.  I do my analysis at the NUTS level, of which there are 12, as you can imagine there is significant variation within a NUTS region.  
+
+The first line of code performs the spatial join. *meta_region* is the data.table we will use later, it contains the code (unique code for each pollution site), the region and the corresponding region number for each pollution site.  
+
+## GIS 
+```{r GIS CHUNK}
+meta_region <- st_join(st_transform(st_read('Pollution_Data/aurn_meta.shp', crs  =  4326 ), 27700) ,st_transform(st_read("NUTS/transformed_nuts.shp"),27700), st_within, left = T)%>%       ##spatial join that assigns a monitoring station to a region
+  st_drop_geometry()%>%                                         ##drops geometry
+  dplyr::select('code', 'regions')%>%                                  ##selects variables we care about
+  distinct() %>%  
+  .[-7& - 153,]                                                 ##AH is on the boarder of Wales and the west midlands, and theres also a random site that has no region or data
+
+numbers_regions <- setDT(tibble('regions' = c('North East','North West', 'Yorkshire and the Humber', 'East Midlands', 'West Midlands', 'East of England', 'London', 'South East', 'South West', 'Wales', 'Scotland', 'Northern Ireland'),
+                          'number' = 1:12))
+meta_region <- setDT(merge(meta_region, numbers_regions, by = 'regions'))
+
+number_of_stations <- meta_region[is.factor(code),.N]
+number_of_stations
+
+nuts <- st_transform(st_read("NUTS/transformed_nuts.shp"),27700)
+
+pol<- st_transform(st_read('Pollution_Data/aurn_meta.shp', crs  =  4326 ), 27700)
+
+
+
+
+tm_shape(nuts)+
+  tm_borders( col = 'blue')+
+tm_shape(pol)+
+  tm_dots(size = 0.01, col = 'green')
+
+
+```
+
+
+
+## Pollution Data
+
+The pollution data I use comes from the network of pollution sites run by the Department for envriomental and rural affairs (DEFRA), more specifically the Automatic Urban and Rurual Network (AURN).  Fortunately this data is avaiable by download with an R package called 'Openair' built by David Carslaw.  I use this to download the data, open the CSV's and the save each year's data as an RDA file to make opening them faster.  
+
+This data comes is measured hourly, to make useful I average for every 24 hours for every site. *all_daily* is a data.table with daily pollution averages for the pollution sites. 
+```{r}
+
+download_pollution_and_save_func <- function(download){
+  if(download != 'yes'){stop(print('Not running'))}
+
+  meta <- setDT(importMeta(source = 'AURN', all = F))
+  
+  fwrite(meta, 'Pollution_Data/Meta_data_AURN.csv')
+
+ geom_meta <- st_as_sf(meta, coords =  c('longitude','latitude'), crs = 4326) 
+ st_write(geom_meta,'Pollution_Data/aurn_meta.shp', append =  FALSE)  ##saves pollution meta data
+ 
+ for(year in 1991:2019){
+   saveRDS(setDT(importAURN(site = meta[, code], year = year, meta = F, pollutant = 'all')), paste0('Pollution_Data/pollution_data_',year,'.rda'), compress  = F)##saves pollution data
+   }   
+}
+
+
+get_daily_site_pollution <- function(get_data){
+  if (get_data != 'yes'){
+    stop(print('You dont want data?'))
+  }
+else  
+  
+daily_pollution <- function(year){
+  
+  if (year <1991 |year >2019){stop(print('Ensure year is in range 1991:2019'))}
+  if (year == 1991){pollutant_names = c('so2','o3','no2','co')}
+  if (year >1991 && year <1998){pollutant_names = c('so2','o3','no2','co','pm10')}
+  if (year >= 1998){pollutant_names = c('so2','o3','no2','co','pm10','pm2.5')}
+
+  daily_data <- readRDS(paste0('Pollution_Data/pollution_data_',year,'.rda')
+      )[,c('date','time') := tstrsplit(date,' ',keep = list(1,2), fixed = T)
+        ][, 'date' := ymd(date)
+          ][, 'time' := hms(time)
+            ][, lapply(.SD,mean),.SDcols = pollutant_names, by = c('date','code')]
+return(daily_data)
+  }
+
+
+datalist = list()                      
+for(year in 1991:2019){
+  datalist[[year-1990]] <- daily_pollution(year)
+  print(year)
+}
+all_daily1 <- rbindlist(datalist, fill = TRUE)
+
+aurn_meta <- fread('Pollution_Data/Meta_data_AURN.csv', header = T) %>%
+  .[,-c('longitude','latitude')]
+
+aqi_func <- function(pollutant, con){
+  il = c(0, 51, 101, 151, 201, 301, 401)
+  ih = c(50, 100, 150, 200, 300, 400, 500)
+  bpl = c(0, 55, 71, 86, 106)
+  bph = c(bpl[-1] - 0.1, 200)
+
+  if(pollutant == 'o3'){  
+    bpl = c(0, 55, 71, 86, 106)
+    bph = c(bpl[-1] - 0.1, 200)
+  }
+  if (pollutant == 'pm2.5'){
+    bpl = c(0, 12.1, 35.5, 55.5, 150.5, 250.5, 350.5)
+    bph = c(12.0, 35.4, 55.4, 150.4, 250.4, 350.4, 500.4)
+  }
+  if (pollutant == 'pm10') {
+    bpl = c(0,55,155,255,355,425,505)
+    bph = c(54,154,254,354,424,504,604)
+  }
+  if (pollutant == 'co'){
+    bpl = c(0.0, 4.5,9.5, 12.5,15.5,30.5, 40.5)
+    bph = c(4.4, 9.4, 12.4,15.4, 30.4, 40.4,50.4)
+  }  
+  if (pollutant == 'so2'){
+    bpl = c(0,36,76,186,305,605,805)
+    bph = c(35, 75, 185, 304, 604, 804, 1004)
+  }  
+  if (pollutant == 'no2'){
+    bpl = c(0,54,101,361,650,1250,1650)
+    bph = c(53,100,360,649, 1249, 1649,  2049)
+  }  
+  
+
+ranking <- fifelse( test =  (con >= bpl[1] && con <= bph[1]) , yes =  1,
+no = (fifelse(test=  (con >= bpl[2] && con <= bph[2]), yes =  2,
+no =(fifelse(test = (con >= bpl[3]&& con <= bph[3]), yes=  3, 
+no = (fifelse(test = (con >= bpl[4] && con <= bph[4]), yes=   4,
+no = (fifelse( test = (con >= bpl[5] && con <= bph[5]), yes =   5,
+no = 0)))))))))
+
+aqi = ceiling((ih[ranking] - il[ranking])/(bph[ranking] - bpl[ranking]) * (con - bpl[ranking]) + il[ranking])
+return(aqi)}
+
+#this last chunk of code converts pollution to ppb and then converts it to the AQI
+
+all_daily <-  merge(all_daily1, aurn_meta, by = 'code')[
+             ][so2 > 0, so2_aqi := aqi_func('so2',round(so2/2.6609, 1))
+              ][no2 > 0, no2_aqi := aqi_func('no2',round(no2/1.9123,1)) 
+                ][pm10 > 0, pm10_aqi := aqi_func('pm10',pm10)
+                  ][co > 0, co_aqi := aqi_func('co',round(co/1.1642,1))
+                    ][pm2.5 > 0, pm2.5_aqi := aqi_func('pm2.5', pm2.5)
+                      ][o3 > 0, o3_aqi := aqi_func('o3', con = round(o3/1.9957,1))
+                        ][, AQI := pmax(no2_aqi,so2_aqi, co_aqi, pm2.5_aqi, o3_aqi, pm10_aqi, na.rm = T)]
+saveRDS(all_daily,'final_data/all_daily_pollution.rda', compress = F)
+
+return(all_daily)
+}
+
+count_row_func <- function(){
+  
+  count_rows = 0
+  
+  for (year in 1991:2019){
+    year_rows <- readRDS(paste0('Pollution_Data/pollution_data_',year,'.rda')
+                  )[, .N]
+    count_rows <-  count_rows + year_rows
+    }
+  
+  return(count_rows)                      
+                        
+}
+
+pollution_count_rows <- count_row_func()
+
+all_daily
+
+time_averaged <- timeAverage(all_daily, avg.time = 'day', type = 'code', data.thresh = 50)
+
+pollutant_names = c('so2','o3','no2','co','pm10','pm2.5')
+
+my_time_avg <- all_daily[,c('date','time') := tstrsplit(date,' ', fixed = T)
+        ][, 'date' := ymd(date)
+          ][, 'time' := hms(time)
+            ][, lapply(.SD,mean),.SDcols = pollutant_names, by = c('date','code')]
+
+```
+
+### AQI Function
+
+```{r AQI Function}
+
+aqi_func <- function(pollutant, con){
+  il = c(0, 51, 101, 151, 201, 301, 401)
+  ih = c(50, 100, 150, 200, 300, 400, 500)
+  bpl = c(0, 55, 71, 86, 106)
+  bph = c(bpl[-1] - 0.1, 200)
+
+  if(pollutant == 'o3'){  
+    bpl = c(0, 55, 71, 86, 106)
+    bph = c(bpl[-1] - 0.1, 200)
+  }
+  if (pollutant == 'pm2.5'){
+    bpl = c(0, 12.1, 35.5, 55.5, 150.5, 250.5, 350.5)
+    bph = c(12.0, 35.4, 55.4, 150.4, 250.4, 350.4, 500.4)
+  }
+  if (pollutant == 'pm10') {
+    bpl = c(0,55,155,255,355,425,505)
+    bph = c(54,154,254,354,424,504,604)
+  }
+  if (pollutant == 'co'){
+    bpl = c(0.0, 4.5,9.5, 12.5,15.5,30.5, 40.5)
+    bph = c(4.4, 9.4, 12.4,15.4, 30.4, 40.4,50.4)
+  }  
+  if (pollutant == 'so2'){
+    bpl = c(0,36,76,186,305,605,805)
+    bph = c(35, 75, 185, 304, 604, 804, 1004)
+  }  
+  if (pollutant == 'no2'){
+    bpl = c(0,54,101,361,650,1250,1650)
+    bph = c(53,100,360,649, 1249, 1649,  2049)
+  }  
+  
+
+ranking <- fifelse( test =  (con >= bpl[1] && con <= bph[1]) , yes =  1,
+no = (fifelse(test=  (con >= bpl[2] && con <= bph[2]), yes =  2,
+no =(fifelse(test = (con >= bpl[3]&& con <= bph[3]), yes=  3, 
+no = (fifelse(test = (con >= bpl[4] && con <= bph[4]), yes=   4,
+no = (fifelse( test = (con >= bpl[5] && con <= bph[5]), yes =   5,
+no = 0)))))))))
+
+aqi = ceiling((ih[ranking] - il[ranking])/(bph[ranking] - bpl[ranking]) * (con - bpl[ranking]) + il[ranking])
+return(aqi)}
+
+
+```
+
+
+
+
+See the complementary data file for the download codes.  I decided to put the download code in a separate file because most of it is not neccesary for comprehension of my thesis.
+
+Explantion of headers of meta data table.  
+SRC_ID - unique site code
+ID_TYPE - Identifier type (this I am slightly confused by) (I think it's the type of data the sites measure)
+
+
+The meta data is still wrong. 
+
+Downloaded this meta data from 'http://archive.ceda.ac.uk/cgi-bin/midas_stations/search_by_name.cgi.py?name=&minyear=&maxyear='
+
+We have Rain data, temperature data, wind data and daily observation data (this includes things like sunlight hours)
+
+
+# Weather Metadata
+```{r}
+
+headers <- as.character(unlist(fread('Weather/meta_headers.csv')[,.(V1)]))
+
+weather_meta <- fread('Weather/SRCE.DATA.COMMAS_REMOVED')%>%
+        setnames(.,headers) %>%
+  .[WMO_REGION_CODE == 6 & GRID_REF_TYPE == 'OS',] %>%
+  .[, SRC_END_DATE := ymd(SRC_END_DATE)] %>%
+  .[SRC_END_DATE > '1991-01-01'] %>%
+  st_as_sf(., coords =  c('HIGH_PRCN_LON','HIGH_PRCN_LAT'), crs = 4326) %>%
+  dplyr::select(SRC_ID, SRC_NAME, SRC_END_DATE, ELEVATION, geometry) %>%
+  setkey(., key = 'SRC_ID')
+
+tm_shape(weather_meta, projection = 4326)+
+  tm_dots('SRC_NAME', size = 0.01, col = 'blue' )+
+  tm_legend(show = T)
+
+nuts_regions <- st_read('NUTS/transformed_nuts.shp', crs = 27700 )%>%
+  st_transform(., crs = 4326)
+##Plot ----
+tmap_mode('plot')
+
+tm_shape(nuts_regions) +
+  tm_borders('red') +
+  tm_legend(show = T)+
+tm_shape(weather_meta)+
+  tm_dots('SRC_NAME', size = 0.01)+
+  tm_legend(show = F)
+
+
+
+```
+
+##### Weather Data 
+
+Weather data is very shit
+
+```{r}
+##Wind -----
+
+get_and_transform_wind_data <- function(get){
+if(get != 'yes'){stop(print('No DATA!!'))}
+wind_headers <- fread('Weather/Wind/WM_Column_Headers.csv', header = F)%>%
+  unlist(.)
+wind_data_list <- list()
+
+for( year in 1991:2019){
+
+wind_data_list[[year - 1990]] <- fread(paste0('Weather/Wind/wind_data',year), fill = T, header = F, sep = ',', col.names = wind_headers
+  )[, c('date','time'):= tstrsplit(OB_END_TIME, split = ' ')
+     ][,.(SRC_ID, date, time, MEAN_WIND_DIR, MEAN_WIND_SPEED)
+       ][, MEAN_WIND_DIR := circular(MEAN_WIND_DIR)]
+print(year)
+  
+}
+nuts_regions <- st_read('NUTS/transformed_nuts.shp', crs = 27700 )%>%
+  st_transform(., crs = 4326)
+
+wind_site_codes <- unique(unlist(rbindlist(wind_data_list, fill = T)[,.(SRC_ID)]))
+
+wind_site_meta <- filter(weather_meta, SRC_ID %in% wind_site_codes)
+
+wind_join <- st_join(wind_site_meta,nuts_regions, st_within)%>%
+  st_drop_geometry(.) %>%
+  dplyr::select(SRC_ID, regions) %>%
+  setDT(.)
+
+wind_data <- rbindlist(wind_data_list, fill = T)[wind_join, on = 'SRC_ID'
+    ][!is.na(regions),
+    ][,.(SRC_ID, regions, date, time, MEAN_WIND_DIR, MEAN_WIND_SPEED)
+      ][, MEAN_WIND_DIR := circular(MEAN_WIND_DIR)
+        ][, list(MEAN_WIND_DIR = mean.circular(MEAN_WIND_DIR, na.rm = T), MEAN_WIND_SPEED = mean(MEAN_WIND_SPEED, na.rm = T)), by = c('date', 'regions')]
+
+saveRDS(wind_data, 'Weather/Rain/all_rain_data.rda', compress = FALSE)
+
+return(wind_data)
+}
+
+
+##Rain ----
+
+get_and_transform_rain_data <- function(get){
+if(get != 'yes'){stop(print('No DATA!!'))}
+headers <- fread('Weather/Rain/RD_Column_Headers.csv', header = F)%>%
+  unlist(.)
+rain_data_list <- list()
+
+for( year in 1991:2018){
+
+  if(year %in% 1991:2013){
+  rain_data_list[[year - 1990]] <- fread(paste0('Weather/Rain/rain_data',year), fill = T, header = F, sep = ',')
+print(year)}
+
+ if(year %in% 2014:2019 ){
+  rain_data_list[[year - 1990]] <- fread(paste0('Weather/Rain/rain_data',year), fill = T, header = F, sep = ',')[,1:15]
+print(year)}
+  }
+
+rain_data <- rbindlist(rain_data_list, fill = T)%>%
+  setnames(., headers) %>%
+  .[,.(SRC_ID, PRCP_AMT, OB_DATE)]
+rm(rain_data_list)
+
+rain_data_site_codes <- unique(unlist(rain_data[,.(SRC_ID)])) 
+
+rain_data_meta <- filter(weather_meta, SRC_ID %in% rain_data_site_codes)
+
+nuts_regions <- st_read('NUTS/transformed_nuts.shp', crs = 27700 )%>%
+  st_transform(., crs = 4326)
+
+rain_join <- st_join(rain_data_meta,nuts_regions, st_within)%>%
+  st_drop_geometry(.) %>%
+  dplyr::select(SRC_ID, regions) %>%
+  setDT(.)
+
+rain_data <- merge.data.table(rain_join,rain_data, by = 'SRC_ID'
+    )[, c('date','time'):= tstrsplit(OB_DATE, split = ' ')
+    ][!is.na(regions),
+    ][,.(SRC_ID, regions, date, PRCP_AMT)
+      ][, lapply(.SD,mean, na.rm = T),.SDcols = c('PRCP_AMT'), by = c('date','regions')]
+        
+saveRDS(rain_data, 'Weather/rain/rain_data.rda', compress = FALSE)
+
+return(rain_data)
+}
+
+
+##Temperature ----
+
+get_and_transform_temp_data <- function(get){
+if(get != 'yes'){stop(print('No DATA!!'))}
+headers <- fread('Weather/Temperature/TD_Column_Headers.csv', header = F)%>%
+  unlist(.)
+temp_data_list <- list()
+
+for( year in 1991:2019){
+temp_data_list[[year - 1990]] <- fread(paste0('Weather/Temperature/temp_data',year), fill = T, header = F, sep = ',')
+print(year)
+}
+
+temp_data <- rbindlist(temp_data_list, fill = T)%>%
+  setnames(., headers) %>%
+  .[, .(OB_END_TIME, SRC_ID, MAX_AIR_TEMP, MIN_AIR_TEMP)]
+
+rm(temp_data_list)
+
+temp_data_site_codes <- unique(unlist(temp_data[,.(SRC_ID)])) 
+
+temp_data_meta <- filter(weather_meta, SRC_ID %in% temp_data_site_codes)
+
+nuts_regions <- st_read('NUTS/transformed_nuts.shp', crs = 27700 )%>%
+  st_transform(., crs = 4326)
+
+temp_join <- st_join(temp_data_meta,nuts_regions, st_within)%>%
+  st_drop_geometry(.) %>%
+  dplyr::select(SRC_ID, regions) %>%
+  setDT(.)
+
+temp_data <- merge.data.table(temp_join,temp_data, by = 'SRC_ID'
+    )[, c('date','time'):= tstrsplit(OB_END_TIME, split = ' ')
+    ][!is.na(regions),
+    ][,.(SRC_ID, regions, date, MAX_AIR_TEMP, MIN_AIR_TEMP)
+      ][, lapply(.SD,mean, na.rm = T),.SDcols = c('MAX_AIR_TEMP', 'MIN_AIR_TEMP'), by = c('date','regions')]
+
+saveRDS(temp_data, 'Weather/Temperature/temp_data.rda', compress = F)
+
+  return(temp_data)
+}
+
+
+merge_cols <- c('regions','date')
+
+rain_temp_wind_daily <- temp_data[rain_data, on = merge_cols
+                  ][wind_data, on = merge_cols
+                    ][, date := ymd(date)
+                      ][, MEAN_WIND_DIR := conversion.circular(MEAN_WIND_DIR, units = 'degrees')
+                        ][ , wind_bins := cut(MEAN_WIND_DIR, breaks = c(-180,-90,0,90,180))]
+
+saveRDS(rain_temp_wind_daily, 'Weather/rain_temp_wind.rda', compress = FALSE)
+
+
+
+
+```
+
+
+
+## Temperature Inversion
+This section gets our measure of temperature inversion that we use as an instrument.
+
+Level 68 correponds to an alitude of 600m, we choose this level similar to [[INSERT PAPERS]]
+
+All files were downloaded from Earth Data.  The time variable starts at 00:00 UTC time.
+
+The 3d data sets have arrays [x,y,z,t] whilst the 2d data sets have [x,y,t]
+```{r}
+
+transform_atmoshperhic <- function(do){
+  if(get != 'yes'){stop(print('No data for you'))}
+  
+atmospheric_links <- readLines('Temp_Inversion/Temp_inv_download_links.txt') %>%
+  tstrsplit(., split = '/')%>%
+  .[[9]] %>%
+  gsub('[[:punct:]]','_', .)
+  
+read_function <- function(filename){
+ncin <- nc_open(paste0('Temp_Inversion/Temp_Inversion/',filename))
+
+temp<- ncvar_get(ncin, varid = 'T')%>%
+  .[ , ,68,2]
+
+date <- ncatt_get(ncin,0,  'RangeBeginningDate')[2] %>%
+  unlist() %>%
+  ymd()
+nc_close(ncin)
+saveRDS(temp, paste0('Temp_Inversion/Temp_925/',date,'temp_925.rda'))
+}
+
+
+
+##Should make these functions so they dont accidently fire
+for (i in 1:length(atmospheric_links)){
+  read_function(filename = atmospheric_links[i])
+}}
+
+transform_surface <- function(get){
+  if(get != 'yes'){stop(print('no transform for you'))}
+
+surface_temp_filenames <- readLines('Temp_Inversion/Surface_temp_download_links.txt')  %>%
+  tstrsplit(., split = '/') %>%
+  .[[9]] %>%
+  gsub('[[:punct:]]','_',.)
+
+
+read_function2 <- function(file){
+  ncin <- nc_open(file)
+  temp <- ncvar_get(ncin, 'TLML', count = c(-1,-1,3))%>%
+  .[, ,3]
+  date <- ncatt_get(ncin, 0, 'RangeBeginningDate')[[2]]%>%
+  ymd(.)
+  nc_close(ncin)
+  saveRDS(temp, paste0('Temp_Inversion/Sur_temp_3am/',date,'surface_temp.rda'))
+  }
+read_function2(paste0('Temp_Inversion/Surface_temp/ ',surface_temp_filenames[[1]]))
+
+
+for (i in 1:length(surface_temp_filenames)){
+  read_function2(paste0('Temp_Inversion/Surface_temp/ ',surface_temp_filenames[[i]]))
+  print(i)
+}}
+
+##need these two for row setting long and lat for data below
+lat_func <- function(get){
+    if(get != 'yes'){stop(print('You dont want data'))}
+  atmospheric_links <- readLines('Temp_Inversion/Temp_inv_download_links.txt') %>%
+  tstrsplit(., split = '/')%>%
+  .[[9]] %>%
+  gsub('[[:punct:]]','_', .)
+  
+ncin_atmos <- nc_open(paste0('Temp_Inversion/Temp_Inversion/',atmospheric_links[[1]]))
+lat_atmos <-ncvar_get(ncin_atmos, varid = 'lat')
+nc_close(ncin_atmos)
+  return(lat_atmos)
+}
+
+lon_late_func <- function(get){
+  if(get != 'yes'){stop(print('You dont want data'))}
+  atmospheric_links <- readLines('Temp_Inversion/Temp_inv_download_links.txt') %>%
+  tstrsplit(., split = '/')%>%
+  .[[9]] %>%
+  gsub('[[:punct:]]','_', .)
+  
+ncin_atmos <- nc_open(paste0('Temp_Inversion/Temp_Inversion/',atmospheric_links[10306]))
+lon_atmos <-ncvar_get(ncin_atmos, varid = 'lon')
+nc_close(ncin_atmos)
+return(lon_atmos)  
+}
+
+
+get_temp_inv <- function(get, date1, date2){
+  if(get != 'yes') {stop(print('no data for you'))}
+  
+diff_func <- function(date){
+ date <- ymd(date)
+ 
+gap1 <- interval(ymd('1991-01-01'), ymd('2013-01-31'))
+gap2 <- interval(ymd('2013-01-31'), ymd('2018-12-31'))
+gap3 <- interval(ymd('2019-01-01'), ymd('2019-05-25'))
+
+if(date %within% gap1){
+surface_temp <- readRDS(paste0('Temp_Inversion/Sur_temp_3am/',date,'surface_temp.rda'))%>%
+ .[-c(1,2,19,20),-c(1,21,22)]##this cuts off data that we dont need [[see above note]]
+atmoshperic_temp <- readRDS(paste0('Temp_Inversion/Temp_925/',date,'temp_925.rda'))%>%
+  .[-c(1,2,19),]
+}
+
+if(date %within% gap2) {
+   surface_temp <- readRDS(paste0('Temp_Inversion/Sur_temp_3am/',date,'surface_temp.rda'))%>%
+ .[-c(1,2,19,20),-c(1,21,22)]##this cuts off data that we dont need [[see above note]]
+atmoshperic_temp <- readRDS(paste0('Temp_Inversion/Temp_925/',date,'temp_925.rda')) %>%
+  .[-c(1,2,19,20),-20]
+      }
+
+if(date %within% gap3) {
+   surface_temp <- readRDS(paste0('Temp_Inversion/Sur_temp_3am/',date,'surface_temp.rda'))%>%
+       .[-c(1,2,19,20),-c(1,21,22)]
+atmoshperic_temp <- readRDS(paste0('Temp_Inversion/Temp_925/',date,'temp_925.rda')) %>%
+  .[,-c(1,21,22)]
+
+      }
+
+difference <- surface_temp - atmoshperic_temp
+
+row.names(difference) <- lon_late_func(get = 'yes') ##(longitude)
+colnames(difference) <- lat_func('yes') ##(latitude)
+
+m_difference <- reshape2::melt(difference)%>%
+  setDT(.) %>%
+  setnames(., c('longitude','latitude','temp_difference'))%>%
+         .[, date := date]%>%
+             mutate(ID = row_number())
+
+return(m_difference)
+}
+
+datalist <- list()
+date_sequence <- seq(ymd(date1),ymd(date2), by = 'day')
+for (i in 1:length(date_sequence)){
+  datalist[[i]] <- diff_func(date_sequence[[i]])
+  if(i%%100==0){print(i)}
+}
+all_temp_inversions <- rbindlist(datalist)
+
+saveRDS(all_temp_inversions, 'Temp_Inversion/all_temp_inversions.rda', compress = FALSE)
+
+return(all_temp_inversions)
+}
+
+
+temp_inv_geographic_join <- function(join){
+  if(join != 'yes') {stop(print('Please set the join argument to yes'))}
+all_temp_inversions <- readRDS('Temp_Inversion/all_temp_inversions.rda')
+  
+temp_geography <- st_as_sf(get_temp_inv('yes','1991-06-01','1991-06-01'),coords = c('longitude','latitude'), crs  = 4326)%>%
+  mutate(ID = row_number()) %>%
+  dplyr::select(-c('temp_difference','date'))
+
+nuts <- st_read("NUTS/transformed_nuts.shp", crs = 27700) %>%
+  st_transform(.,4326)
+
+
+joined <- sf::st_join(temp_geography, nuts)%>%
+  st_drop_geometry()%>%
+  drop_na()%>%
+  setDT(.)
+
+numbers_regions <- setDT(tibble('regions' = c('North East','North West', 'Yorkshire and the Humber', 'East Midlands', 'West Midlands', 'East of England', 'London', 'South East', 'South West', 'Wales', 'Scotland', 'Northern Ireland'),
+                          'number' = 1:12))
+
+average_region <- all_temp_inversions[joined, on = 'ID'
+                          ][, lapply(.SD, mean), .SDcols = c('temp_difference'),by = c('regions','date')
+                              ][numbers_regions, on  ='regions'] %>%
+                                   setnames(., 'number','region')
+
+saveRDS(average_region, 'Temp_Inversion/daily_average_region.rda', compress = FALSE)
+
+tm_shape(nuts)+
+  tm_borders( col = 'blue')+
+  tm_grid()+
+tm_shape(temp_geography)+
+  tm_dots(size = 0.1 ,col = 'red')+tm_grid()
+
+return(average_region)
+}
+
+
+```
+
+
+## Summary Statistics
+#### SS - Pollution
+```{r Summary Statistics}
+pollution_plot <- function(type, pollutant){
+ 
+  if(type != 'monthly' && type != 'yearly' && type != 'hourly'){
+    stop(print('type is either monthly or yearly'))
+  }
+
+  
+  if(type == 'monthly'){
+  monthly_mean <- monthly_mean <- all_daily %>%
+      .[,c('month','year') := list(month(date), year(date))] %>%
+      .[,lapply(.SD, mean, na.rm = T), .SDcols = 3:8, by = c('month','year')] %>%
+      .[,month_year := paste(month, year, sep = '-')]
+    
+  month_plot <- ggplot(data =  monthly_mean , aes_string(x = 'month', y = pollutant, color = 'year'))+ 
+      geom_point(size = 3) +
+      geom_smooth(method = 'auto') + 
+      theme_bw()
+ plot <- month_plot
+  }
+if(type == 'yearly'){
+  yearly_mean <- yearly_mean <- all_daily %>%
+    .[,year := year(date)] %>%
+    .[,lapply(.SD, mean, na.rm = T), .SDcols = 3:8, by = year]
+  
+  year_plot <- ggplot(data =  yearly_mean , aes_string(x = 'year', y = pollutant))+ 
+    geom_point(size = 3) +
+    geom_smooth(method = 'auto') + 
+    theme_bw()
+ plot <- year_plot
+}
+  return(plot)
+}
+
+show(pollution_plot(type = 'yearly', pollutant = 'o3'))
+
+
+##was trying to get some nice tables of years and number of pollution sites active that year but failed.  Could have just done it the manual way by this point
+sites_df <- data.frame()
+all_daily[,year := year(date)
+          ][,.(year, code)]
+
+table(all_daily[,year := year(date)
+          ][,.(year, code)])
+
+dat[, .(count = .N, var = sum(VAR)), by = MNTH]
+
+sites_in_2018 <- all_daily[, year := year(date)
+                           ][, .N, by = c('date')]
+                           
+sites_in_2018
+site_type <- all_daily[, .N, by = .(site_type)]
+site_type
+###
+```
+
+#### SS - USS
+
+The next chunk of code gives us some very basic summary statistics for the USS data.
+
+
+```{r USS}
+
+system.time(understanding_society_panel <- rbindlist(list(bhps_all('yes'), ukhls_all('yes')), fill = T))
+
+
+is.data.table(understanding_society_panel)
+
+year_wellbeing <- understanding_society_panel %>%
+  .[, year := lubridate::year(date)]%>%
+  .[wellbeing >= 0] %>%
+  .[, .(mean_wellbeing= mean(wellbeing, na.rm = T)), by = year]
+
+plot1 <- ggplot(data = year_wellbeing, aes(x = year, y = mean_wellbeing))+
+                geom_point(size = 2) +
+                geom_smooth(method = 'auto')  
+
+show(plot1)
+
+
+month_wellbeing <- understanding_society_panel %>%
+  .[, month := lubridate::month(date)]%>%
+  .[wellbeing >= 0] %>%
+  .[, .(mean_wellbeing= mean(wellbeing, na.rm = T)), by = month]
+
+monthly_trends <- ggplot(data = month_wellbeing, aes(x = month, y = mean_wellbeing))+
+                geom_point(size = 2) +
+                geom_smooth(method = 'auto')  
+
+show(monthly_trends)
+
+region_trends <- merge.data.table(understanding_society_panel, numbers_regions, by.x = 'region', by.y = 'number') %>%
+  .[,region := NULL] %>%
+  .[wellbeing >0] %>%
+  .[,.(mean_wellbeing = mean(wellbeing,na.rm = T)), by = regions] %>%
+  .[order(mean_wellbeing)]
+
+regions_plot <- ggplot(data = region_trends, aes(x = regions, y = mean_wellbeing))+
+  geom_col(size = 2) +
+  geom_smooth(method = 'auto') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+
+show(regions_plot)
+
+```
+
+
+
+# Final Data Preparation
+
+First we get all the data that has been prepared above then we merge it into 1 datatable.  We also compute the AQI for each day. 
+
+```{r}
+#understanding_society_panel <- rbindlist(list(bhps_all('yes'), ukhls_all('yes')), fill = T)
+#saveRDS(understanding_society_panel, 'final_data/uss.rda', compress = FALSE)
+all_daily_pollution <- readRDS('final_data/all_daily_pollution.rda')
+understanding_society_panel <- readRDS('final_data/uss.rda')
+rain_temp_wind_daily <- readRDS('Weather/rain_temp_wind.rda')
+average_daily_region_temp_inv <- readRDS('Temp_Inversion/daily_average_region.rda')
+
+count_rows <- all_daily_pollution[, .N] + understanding_society_panel[, .N] + rain_temp_wind_daily[, .N] + average_daily_region_temp_inv[, .N]
+
+max(average_daily_region_temp_inv$date)
+max(rain_temp_wind_daily$date)
+##note need to run AQI func and GIS sections for the panel to work
+
+##panel merges and transforms the data into something useful, there are a few negatives (usually coding meaning inapplicable or missing) so i take them out
+panel <- all_daily_pollution[
+    ][meta_region, on = 'code',region := number
+      ][ ,lapply(.SD, mean, na.rm = T), .SDcols = c('so2','o3','no2','co','pm10','pm2.5'), by = c('date','region')
+        ][so2 >= 0, so2_aqi := aqi_func('so2',round(so2/2.6609, 1))
+          ][so2 < 0, so2 := 0
+          ][no2 >= 0, no2_aqi := aqi_func('no2',round(no2/1.9123,1))         
+        ][no2 < 0, no2 := 0 
+    ][pm10 >= 0, pm10_aqi := aqi_func('pm10',pm10)
+    ][pm10 < 0 , pm10:=0
+      ][co >= 0, co_aqi := aqi_func('co',round(co/1.1642,1))
+        ][co <0, co := 0
+           ][pm2.5 >= 0, pm2.5_aqi := aqi_func('pm2.5', pm2.5)            ][pm2.5 < 0, pm2.5 := 0
+          ][o3 >= 0, o3_aqi := aqi_func('o3', con = round(o3/1.9957,1))
+          ][ o3 < 0, o3 := 0
+          ][, AQI := pmax(no2_aqi,so2_aqi, co_aqi, pm2.5_aqi, o3_aqi, pm10_aqi, na.rm = T)
+         ][,':='(lag_1_aqi = data.table::shift(AQI, 1), lag_2_aqi = data.table::shift(AQI, 2), lag_3_aqi = data.table::shift(AQI, 3), lag_4_aqi = data.table::shift(AQI, 4), lag_5_aqi = data.table::shift(AQI, 5), lag_6_aqi = data.table::shift(AQI, 6), month_lead = data.table::shift(AQI,-100)), by = 'region'
+                      ][understanding_society_panel, on = c('region','date')
+                        ][ !is.na(date) & wellbeing >=0 &pidp >=1
+                         ][average_daily_region_temp_inv, on = c('region','date')
+                          ][age>0,
+                           ][,age_level := cut(age, breaks = c(15,25,35,45,55,65,75,85,102))
+                            ][rain_temp_wind_daily, on = c('date','regions')
+                             ][AQI>=0 & !is.na(date) & wellbeing >=0 &pidp >=1,
+                               ][,':='(year = year(date), month = month(date), week_day = wday(date))
+                                ][sex >= 1,
+                                  ][sex == 1, male :=1
+                                  ][ , male := nafill(male, fill = 0)
+                                  ][hcond1 == 1| hcondn1 == 1| hcondns1 ==1| hconds01 ==1, Asthma := 1
+                                   ][ , Asthma := nafill(Asthma, fill = 0)
+                                        ][temp_difference < 0, temp_inversion := temp_difference
+                                          ][ , temp_inversion := nafill(temp_inversion, fill = 0)
+                                             ][monthly_income >= 0, 
+                                               ][PRCP_AMT >= 0 ,
+                                                 ]
+
+sanity_check <- distinct(panel[regions == 'South West',.(date, AQI, lag_1_aqi, lag_2_aqi, lag_3_aqi, lag_4_aqi, lag_5_aqi, lag_6_aqi) ])
+
+
+unique(all_daily_pollution$site_type)
+nrow(all_daily_pollution[site_type =='Urban Traffic'])
+
+average_by_sitetype <- all_daily_pollution[
+      ][meta_region, on = 'code',region := number
+      ][site_type %in% c('Urban Traffic','Urban Background','Rural Background')
+      ][site_type %in% c('Urban Traffic','Urban Background'), urban := 1
+      ][site_type == 'Rural Background', urban :=2  
+      ][ , lapply(.SD, mean, na.rm = T), .SDcols = c('so2','o3','no2','co','pm10','pm2.5'), by = c('date','region','urban')
+      ][so2 > 0, so2_aqi := aqi_func('so2',round(so2, 1))
+      ][no2 > 0, no2_aqi := aqi_func('no2',round(no2,1)) 
+      ][pm10 > 0, pm10_aqi := aqi_func('pm10',pm10)
+      ][co > 0, co_aqi := aqi_func('co',round(co,1))
+      ][pm2.5 > 0, pm2.5_aqi := aqi_func('pm2.5', pm2.5)
+      ][o3 > 0, o3_aqi := aqi_func('o3', con = round(o3,1))
+      ][, AQI := pmax(no2_aqi,so2_aqi, co_aqi, pm2.5_aqi, o3_aqi, pm10_aqi, na.rm = T)
+      ][average_daily_region_temp_inv, on = c('region','date')##average region is temp inversion
+      ][AQI>0]
+saveRDS(average_by_sitetype, 'final_data/average_by_sitetype.rda')
+  
+##would be better to get from panel and get rid of                 
+ukhls <- panel[
+  ][data_source == 'UKHLS'
+    ][urban == 1|2
+      ][,-c('so2','o3','no2','co','pm10','pm2.5','so2_aqi','o3_aqi','no2_aqi','co_aqi','pm10_aqi','pm2.5_aqi','AQI')]
+       
+
+head(ukhls)
+ukhls_panel <- merge.data.table(ukhls, average_by_sitetype, by = c('date','region','urban'))
+
+saveRDS(panel, 'final_data/panel.rda', compress = F)
+
+
+```
+
+
+
+# Main Analysis & IV Results
+
+I strucuture this chunk as I structure the analysis in my disseration, namely: 
+basic data discussion
+basic results + IV results, - this includes the lagged model with a caveat about p hacking and that it wasnt in my original analysis plan
+Heteogeinty and mechanisms analysis, - discussion of mechanisms health satisfaction by part of wellbeing, and basic hetero - age, gender, race
+Extensions - By pollutant separately and together, life stat yearly data,
+
+
+```{r}
+panel <- readRDS('final_data/panel.rda')
+
+
+#data exploration
+
+#count number of years per individual
+
+count_df <- panel[, .N, by = .(pidp)]
+
+
+ggplot(count_df, mapping = aes(x = N))+
+  geom_histogram(binwidth = 1) + 
+  theme_bw()+
+  labs( x = 'Number of years in survey', y = 'Count', title = 'Unbalanced Panel Histogram')
+
+panel[pidp %in% count_df[N >= 26, pidp], ]
+
+year_count_dt <- panel[, .N, by = .(year)]  
+year_count_dt
+##individuals in each year
+
+
+### Basic Regressions -----
+
+no_controls <- lm(wellbeing ~ AQI , data = panel)
+summary(no_controls)
+
+ols_lm <- lm(wellbeing ~ AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED, data = panel)
+summary(ols_lm)
+
+#individual and time fe
+basic_spec <- wellbeing ~ AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + pidp   | 0  | pidp
+basic_spec_results <- felm(basic_spec, panel )
+summary(basic_spec_results)
+
+time_fixed_effects <- felm(wellbeing ~ AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED| date | 0 | 0 , panel )
+summary(time_fixed_effects)
+
+
+
+basic_spec_regions_fe <- wellbeing ~  AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  | pidp
+basic_spec_regions_fe_results <- felm(basic_spec_regions_fe, panel)
+summary(basic_spec_regions_fe_results)
+
+basic_spec_regions_fe_with_income <- wellbeing ~  AQI + monthly_income +  MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  | pidp
+basic_spec_regions_fe_with_income_results <- felm(basic_spec_regions_fe_with_income, panel)
+summary(basic_spec_regions_fe_with_income_results)
+
+test <- panel[, lapply(.SD, mean), .SDcols = c('wellbeing','AQI','MAX_AIR_TEMP','MIN_AIR_TEMP','PRCP_AMT', 'MEAN_WIND_SPEED'), by = c('regions','date')]
+
+test_reg_results <- felm(wellbeing ~  AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  , data = test)
+summary(test_reg_results)
+
+with_lags <- wellbeing ~ AQI + lag_1_aqi + lag_2_aqi  + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |   pidp + date| 0  | regions
+with_lags_results <- felm(with_lags, panel)
+summary(with_lags_results)
+## add lagged one to Main regression table
+
+
+## URBAN RURAL SPLIT
+ukhls_urban_rural_panel <- merge.data.table(panel[data_source == 'UKHLS',-c('so2','o3','no2','co','pm10','pm2.5','so2_aqi','o3_aqi','no2_aqi','co_aqi','pm10_aqi','pm2.5_aqi','AQI') ], readRDS('final_data/average_by_sitetype.rda'), by = c('date','region','urban'))
+
+urban_rural <- wellbeing ~ AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED| date + pidp
+urban_rural_results <- felm(urban_rural, data = ukhls_urban_rural_panel)
+summary(urban_rural_results)
+
+
+
+
+
+
+## IV analysis ----
+
+require(nlme)
+formula <- AQI ~ 
+
+wind_direction_model <- wellbeing ~  MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date  + pidp | (AQI ~ regions:wind_bins) | 0
+
+wind_IV_results <- felm(wind_direction_model, panel )
+
+
+summary(wind_IV_results)
+
+summary(wind_IV_results$stage1)$fstat
+
+max(wind_IV_results$fitted.values)
+##maybe need to think about how to constrain this model since it is going way past
+
+#wind_robustness
+
+
+panel[ ,wind_direction_robust := cut(MEAN_WIND_DIR, breaks = c(-180,-135,-90,-45,0, 45,90,135,180))]
+
+wind_robustness <- wellbeing ~  MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date  + pidp | (AQI ~ regions:wind_direction_robust) | 0
+wind_robustness_results <- felm(wind_robustness, panel)
+summary(wind_robustness_results)
+
+
+
+temp_inv_model <- wellbeing ~  MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date + regions | (AQI ~ temp_inversion) | 0 
+Temperature_inversion_model <- felm(temp_inv_model,  data = panel)
+summary(Temperature_inversion_model)
+
+summary(Temperature_inversion_model$stage1)
+
+
+
+```
+
+
+
+
+##Heterogeneity & mechanisms
+
+Massive difference when I use region or individual FE.  I think because of measurement error most of the variation within an individual is measurement error.  This makes individual analysis much more sustible to attenuation bias.  
+Likewise, this would help explain why the region effects are different because there is so much more variation in pollution and wellbeing.  
+
+Explanations
+Health statisfaction regression - medical channel although it doesnt capture exactly what we want
+
+Asthma reg - if medical route then people with asthma will be effected more.  However, probably bad control issues.  
+
+separate parts of wellbeing - argue that concentration etc are hit
+
+age, gender, race for heterogeinity
+
+```{r}
+health_satisfaction <- health_satisfaction ~  AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date +pidp | 0 | pidp
+health_satisfaction_results <- felm(health_satisfaction, panel[data_source == 'bhps',])
+summary(health_satisfaction_results)
+
+asthma_reg <- wellbeing ~ AQI*Asthma + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + regions| 0 | pidp
+asthma_reg_results <- felm(asthma_reg, panel[data_source == 'UKHLS'])
+summary(asthma_reg_results)
+
+
+#separate parts of wellbeing -- with region fixed effects
+names <- c('concentration','sleep','playing_useful_role','decision_capability','under_strain','overcoming_difficulties','enjoy_day_to_day','facing_problems','unhappy','losing_confidence','self_worth','general_happiness','wellbeing')
+print(names)
+wellbeing_components_with_region_fe <-  wellbeing |concentration|sleep|playing_useful_role|decision_capability  |under_strain|overcoming_difficulties|enjoy_day_to_day|facing_problems|unhappy|losing_confidence|self_worth |general_happiness|wellbeing ~ AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date + regions | 0 | 0
+wellbeing_components_with_region_fe_results <- felm(wellbeing_components_with_region_fe, data = panel)
+
+df_wellbeing_components <- data.frame()
+
+for(n in 1:length(names)){
+df_wellbeing_components[n,'coefficient'] <- names[n]
+df_wellbeing_components[n,'estimate']<- summary(wellbeing_components_with_region_fe_results, lhs = paste0(names[[n]]))$coefficients[1]
+df_wellbeing_components[n, 't-value'] <- summary(wellbeing_components_with_region_fe_results , lhs = paste0(names[[n]]))$coefficients[3]
+print(summary(wellbeing_components_with_region_fe_results, lhs = paste0(names[[n]])))
+}
+
+
+wellbeing_pollution_region_plot <- ggplot(data = df_wellbeing_components, mapping = aes(coefficient,estimate))+
+  geom_point(size = 2)+
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+   geom_hline(yintercept=0, color = 'blue', size = 1) +
+  ggtitle('Effects of pollution on wellbeing, with regional FE')
+
+#separate parts of wellbeing -- with individual effects
+
+wellbeing_components <- wellbeing|concentration|sleep|playing_useful_role|decision_capability|under_strain|overcoming_difficulties|enjoy_day_to_day|facing_problems|unhappy|losing_confidence|self_worth|general_happiness|wellbeing ~ AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date + pidp | 0 | 0
+wellbeing_components_results <- felm(wellbeing_components, data = panel)
+
+df_individual_effects <- data.frame()
+for(n in 1:length(names)){
+df_individual_effects[n,'coefficient'] <- names[n]
+df_individual_effects[n,'estimate']<- summary(wellbeing_components_results, lhs = paste0(names[n]))$coefficients[1]
+df_individual_effects[n, 't-value'] <- summary(wellbeing_components_results, lhs = paste0(names[n]))$coefficients[3]
+
+}
+wellbeing_pollution_individual_plot <- ggplot(data = df_individual_effects, mapping = aes(coefficient,estimate))+
+  geom_point(size = 2)+
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+   geom_hline(yintercept=0, color = 'blue', size = 1) +
+  ggtitle('Effects of AQI on components of wellbeing, with individual FE')
+
+
+
+##not sure whether to include age
+with_age_interaction <- wellbeing ~  AQI*age_level + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + pidp| 0 | 0
+with_age_interaction_results <- felm(with_age_interaction, panel)
+summary(with_age_interaction_results)
+
+
+with_age_interaction_region_fe <- wellbeing ~  AQI*age_level  + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + regions | 0 | 0
+with_age_interaction_results_region_fe <- felm(with_age_interaction_region_fe, panel)
+summary(with_age_interaction_results_region_fe)
+
+
+gender_reg <- wellbeing ~  AQI*male  + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + regions| 0 | 0
+gender_reg_results <- felm(gender_reg, panel)
+
+
+ethnic_reg <- wellbeing ~ AQI*ethnicity  + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + regions| 0 | pidp
+ethnic_reg_results <- felm(ethnic_reg, panel)
+summary(ethnic_reg_results)
+
+white_ethnic_groups <- unique(panel$ethnicity)[1:3]
+
+non_white_ethnic_groups <- unique(panel$ethnicity)[4:18]
+
+
+simple_ethnic_reg <- wellbeing ~ AQI*white + monthly_income + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + regions| 0 | pidp
+simple_ethnic_reg_results <- felm(simple_ethnic_reg, panel[ethnicity %in% white_ethnic_groups, white := 1
+              ][ ! ethnicity %in% white_ethnic_groups, white := 0 ])
+
+summary(simple_ethnic_reg_results)
+
+summary(gender_reg_results)
+
+summary(with_age_interaction_results)
+
+
+
+
+```
+
+
+
+## Extensions 
+
+Mix of stuff here.
+
+Income - for comparison with pollution, 
+
+pollution correlation matrix to look at correlation of pollution over time - just thought could this be a multi collinearity problem including lags since the lag is incredibly correlated with todays explanatory variable.
+
+by different pollutant to show that if we just did one we would be missing the true effect. 
+
+```{r}
+
+#should also have something obvious to compare it to like unemployment 
+
+basic_spec_income <- wellbeing ~ monthly_income + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  | 0
+basic_spec_income_results <- felm(basic_spec_income, panel )
+
+summary(basic_spec_income_results)
+
+
+##correlation of pollutants
+correlation_panel <- panel[ , .(no2, so2, co, pm10, pm2.5, o3)]
+
+pollutant_correlation_matrix <- cor(correlation_panel, use = 'pairwise.complete.obs')
+
+pollutant_correlation_matrix[upper.tri(pollutant_correlation_matrix, diag = T)] <- 0
+Ho
+pollutant_correlation_matrix
+
+##autocorrelation of AQI
+acf(panel$AQI,lag.max = 100 )
+
+
+#by pollutants ----
+
+pollution_list <- list()
+
+no2_panel <- panel[no2_aqi >0,]
+no2_wellbeing <- wellbeing ~ no2_aqi + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |date + pidp| 0 | 0
+no2_wellbeing_results <- felm(no2_wellbeing, data = no2_panel)
+pollution_list[['no2_wellbeing_results']] <- tidy(no2_wellbeing_results)%>%
+  mutate(model = 'no2_wellbeing_results' ) %>%
+  .[1,]
+  
+
+so2_panel <- panel[so2_aqi >0,]
+so2_wellbeing <- wellbeing ~ so2_aqi+ MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED  |date +pidp|0|0
+so2_wellbeing_results <- felm(so2_wellbeing, data = so2_panel)
+pollution_list[['so2_wellbeing_results']] <- tidy(so2_wellbeing_results)%>%
+  mutate(model = 'so2_wellbeing_results' ) %>%
+  .[1,]
+
+
+pm10_panel <- panel[pm10_aqi>0,]
+pm10_wellbeing <- wellbeing ~ pm10_aqi + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date +pidp | 0|0
+pm10_wellbeing_results <- felm(pm10_wellbeing, data = pm10_panel)
+pollution_list[['pm10_wellbeing_results']] <- tidy(pm10_wellbeing_results)%>%
+  mutate(model = 'pm10_wellbeing_results' ) %>%
+  .[1,]
+
+
+pm2.5_panel <- panel[pm2.5_aqi>0,]
+pm2.5_wellbeing<- wellbeing ~ pm2.5_aqi + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date +pidp|0|0
+pm2.5_wellbeing_results <- felm(pm2.5_wellbeing, data = pm2.5_panel)
+pollution_list[['pm2.5_wellbeing_results']] <- tidy(pm2.5_wellbeing_results)%>%
+  mutate(model = 'pm2.5_wellbeing_results' ) %>%
+  .[1,]
+
+o3_panel <- panel[o3_aqi >0,]
+o3_wellbeing <- wellbeing  ~ o3_aqi + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED  |date + pidp |0|0
+o3_wellbeing_results <- felm(o3_wellbeing, data = o3_panel)
+pollution_list[['o3_wellbeing_results']] <- tidy(o3_wellbeing_results)%>%
+  mutate(model = 'o3_wellbeing_results' ) %>%
+  .[1,]
+
+
+co_panel <- panel[co_aqi >0,]
+co_wellbeing <- wellbeing ~ co_aqi  + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date +pidp | 0 |0
+co_wellbeing_results <- felm(co_wellbeing, data = co_panel)
+pollution_list[['co_wellbeing_results']] <- tidy(co_wellbeing_results)%>%
+  mutate(model = 'co_wellbeing_results' ) %>%
+  .[1,]
+
+
+aqi_wellbeing <-  wellbeing ~ AQI  + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date +pidp | 0 |0
+aqi_wellbeing_results <- felm(aqi_wellbeing, data = panel)
+pollution_list[['aqi_wellbeing_results']] <- tidy(aqi_wellbeing_results)%>%
+  mutate(model = 'aqi_wellbeing_results' ) %>%
+  .[1,]
+
+
+Pollutants_in_separate_regressions <- dwplot(rbindlist(pollution_list))+
+      geom_vline(xintercept = 0) +
+        ggtitle('Pollutants in separate regressions')
+Pollutants_in_separate_regressions
+
+
+all_individual_pollutants <- wellbeing ~ no2_aqi + co_aqi + o3_aqi + pm2.5_aqi + pm10_aqi + so2_aqi + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED | date +pidp | 0 |0
+
+all_individual_pollutants_results <- felm(all_individual_pollutants, panel)
+
+
+Point_estimates_of_individual_pollutants <- dwplot(all_individual_pollutants_results)+
+  geom_vline(xintercept = 0) +
+  ggtitle('Point estimates of individual pollutants')
+
+
+#### ----
+
+
+panel[, wellbeing := as.factor(wellbeing)]
+
+ordered_logit_model <- polr(wellbeing ~ AQI , data = panel[, wellbeing := as.factor(wellbeing)], method = 'logistic')
+
+ordered_logit_model$method
+
+
+
+
+```
+
+
+
+## Robustness
+```{r}
+#check whether the regions estimator is sensitive to income
+basic_spec_regions_fe <- wellbeing ~  AQI + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  | 0
+basic_spec_regions_fe_results <- felm(basic_spec_regions_fe, panel )
+summary(basic_spec_regions_fe_results)
+
+region_fixed_effects_income <- wellbeing ~ AQI + monthly_income + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  | 0
+region_fixed_effects_income_results <- felm(region_fixed_effects_income, panel)
+summary(region_fixed_effects_income_results)
+# similar sized effect when controlling for income
+
+
+
+region_fixed_effects_income_inversion <- wellbeing ~  monthly_income + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | (AQI ~ temp_inversion)  | 0
+region_fixed_effects_income_inversion_results <- felm(region_fixed_effects_income_inversion, panel)
+summary(region_fixed_effects_income_inversion_results)
+
+region_year_avg_model <- wellbeing ~ AQI + monthly_income + MAX_AIR_TEMP + MIN_AIR_TEMP + PRCP_AMT + MEAN_WIND_SPEED |  date + regions   | 0  | 0
+
+
+
+drop_out_robust_years <- panel[data_source =='UKHLS', .N, by = pidp
+                               ][N==9,pidp]
+
+drop_out_robust_data <- panel[pidp %in% drop_out_robust_years, ]
+
+drop_out_robust_reg <- felm(basic_spec, data = drop_out_robust_data)
+
+
+
+```
+
+
+
+
+
+
